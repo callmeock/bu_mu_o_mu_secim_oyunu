@@ -1,0 +1,110 @@
+{
+  "Arabalar": {
+    "key": "arabalar",
+    "items": [
+      "BMW", "Mercedes", "Audi", "Volkswagen",
+      "Toyota", "Honda", "Ford", "Chevrolet",
+      "Tesla", "Hyundai", "Kia", "Nissan",
+      "Peugeot", "Renault", "Skoda", "Fiat",
+      "Volvo", "Mazda", "Lexus", "Jeep",
+      "Subaru", "Mitsubishi", "Porsche", "Ferrari",
+      "Lamborghini", "Bugatti", "Citroen", "Opel",
+      "Dacia", "Seat", "Alfa Romeo", "Mini"
+    ]
+  },
+
+  "Yemekler": {
+    "key": "yemekler",
+    "items": [
+      "Pizza", "Burger", "Sushi", "Lazanya",
+      "Tacos", "Mantı", "Lahmacun", "Ramen",
+      "Spaghetti", "Börek", "Et Döner", "Pide",
+      "Çiğköfte", "Simit", "Steak", "Balık",
+      "Köfte", "Tavuk", "Adana", "İskender",
+      "Kumpir", "Karnıyarık", "Gözleme", "Mercimek Çorbası",
+      "Sezar Salata", "Paella", "Etli Ekmek", "Menemen",
+      "Tost", "Şinitzel", "Fajita", "Hotdog"
+    ]
+  },
+  "Filmler": {
+    "key": "filmler",
+    "items": [
+      "Inception", "The Godfather", "The Dark Knight", "Pulp Fiction",
+      "Fight Club", "Interstellar", "Forrest Gump", "The Matrix",
+      "Titanic", "The Shawshank Redemption", "The Lord of the Rings", "Gladiator",
+      "Avatar", "Whiplash", "The Social Network", "The Prestige",
+      "Parasite", "Django Unchained", "La La Land", "Joker",
+      "The Silence of the Lambs", "Goodfellas", "Seven", "Shutter Island",
+      "The Truman Show", "Mad Max Fury Road", "Coco", "WALL-E",
+      "Spirited Away", "The Pianist", "1917", "The Grand Budapest Hotel"
+    ]
+  },
+  "Futbolcular": {
+    "key": "futbolcular",
+    "items": [
+      "Lionel Messi", "Cristiano Ronaldo", "Neymar", "Kylian Mbappe",
+      "Erling Haaland", "Zlatan Ibrahimovic", "Ronaldinho", "David Beckham",
+      "Luis Suarez", "Robert Lewandowski", "Karim Benzema", "Mohamed Salah",
+      "Sadio Mane", "Vinicius Junior", "Luka Modric", "Kevin De Bruyne",
+      "Sergio Ramos", "Virgil van Dijk", "Paolo Maldini", "Andrea Pirlo",
+      "Mesut Özil", "Didier Drogba", "Thierry Henry", "Wayne Rooney",
+      "Frank Lampard", "Steven Gerrard", "Xavi", "Andres Iniesta",
+      "Arda Güler", "Kaka", "Marco Reus", "Radamel Falcao"
+    ]
+  },
+  "Çizgi Film": {
+    "key": "cizgifilm",
+    "items": [
+      "Mickey Mouse", "SpongeBob", "Tom", "Jerry",
+      "Scooby Doo", "Shrek", "Elsa", "Anna",
+      "Lightning McQueen", "Buzz Lightyear", "Woody", "Minions",
+      "Pikachu", "Ash Ketchum", "Dora", "Diego",
+      "Peppa Pig", "George Pig", "Tweety", "Batman",
+      "Superman", "Wonder Woman", "Iron Man", "Hulk",
+      "Captain America", "Spiderman", "Paw Patrol", "Bluey",
+      "Ben 10", "Rapunzel", "Tiana", "Moana"
+    ]
+  },
+  "League of Legends": {
+    "key": "leagueoflegends",
+    "items": [
+      "Aatrox", "Ahri", "Alistar", "Ambessa",
+      "Amumu", "Ashe", "Blitzcrank", "Cho Gath",
+      "Darius", "Diana", "Draven", "Fizz",
+      "Gangplank", "Garen", "Gragas", "Jarvan",
+      "Katarina", "LeBlanc", "Lee Sin", "Leona",
+      "Lux", "Maokai", "Orianna", "Rengar",
+      "Ryze", "Talon", "Thresh", "Velkoz",
+      "Vladimir", "Yasuo", "Zed", "Zyra"
+    ]
+  },
+   "Meyveler": {
+    "key": "meyveler",
+    "items": [
+       "Elma", "Armut", "Muz", "Çilek",
+  "Karpuz", "Kavun", "Kiraz", "Vişne",
+  "Şeftali", "Kayısı", "Erik", "Üzüm",
+  "Portakal", "Mandalina", "Greyfurt", "Limon",
+  "Nar", "Avokado", "Ananas", "Mango",
+  "Kivi", "İncir", "Hurma", "Yaban Mersini",
+  "Ahududu", "Böğürtlen", "Papaya", "Guava",
+  "Çarkıfelek Meyvesi", "Ejder Meyvesi", "Hindistan Cevizi", "Pomelo"
+]
+},
+   "Ülkeler": {
+    "key": "ulkeler",
+    "items": [
+  "Türkiye", "Japonya", "Amerika", "İngiltere",
+  "Fransa", "Almanya", "İtalya", "İspanya",
+  "Yunanistan", "Brezilya", "Arjantin", "Kanada",
+  "Meksika", "Hindistan", "Çin", "Güney Kore",
+  "Avustralya", "Mısır", "İsveç", "Norveç",
+  "Finlandiya", "Hollanda", "Belçika", "Portekiz",
+  "İsviçre", "Avusturya", "İran", "Suudi Arabistan",
+  "Rusya", "Güney Afrika", "Endonezya", "Yeni Zelanda"
+]
+}
+  
+
+
+}

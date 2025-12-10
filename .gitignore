@@ -1,0 +1,67 @@
+# Flutter / Dart
+.dart_tool/
+.packages
+build/
+.pub-cache/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Platform-specific
+android/local.properties
+ios/Flutter/Flutter.podspec
+**/Pods/
+macos/Pods/
+linux/flutter/ephemeral/
+windows/flutter/ephemeral/
+
+# Node / tools
+fire-import/node_modules/
+fire-import/package-lock.json
+
+# Secrets
+serviceAccount.json
+fire-import/serviceAccount.json
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Flutter / Dart
+.dart_tool/
+.packages
+.pub-cache/
+build/
+flutter_*.log
+
+# Android
+android/.gradle/
+android/local.properties
+android/**/GeneratedPluginRegistrant.java
+android/app/debug/
+android/app/profile/
+android/app/release/
+
+# iOS
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.podspec
+ios/Flutter/Generated.xcconfig
+ios/Flutter/ephemeral/
+ios/Flutter/flutter_export_environment.sh
+ios/**/xcuserdata/
+ios/**/DerivedData/
+
+# macOS
+macos/Pods/
+macos/Flutter/ephemeral/
+macos/**/xcuserdata/
+macos/**/DerivedData/
+
+# Web
+.web/
+

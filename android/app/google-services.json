@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "943154676955",
+    "project_id": "bumuomu-96772",
+    "storage_bucket": "bumuomu-96772.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:943154676955:android:900d4c551c5ec4220b78fe",
+        "android_client_info": {
+          "package_name": "com.ock.bumuomu"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCC2IniYUlg9OhWQXmH-uuVRxpNqRYA69g"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
