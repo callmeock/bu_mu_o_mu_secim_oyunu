@@ -65,3 +65,19 @@ macos/**/DerivedData/
 # Web
 .web/
 
+# Env
+.env
+.env.*
+*.env
+
+# Firebase
+google-services.json
+GoogleService-Info.plist
+
+# Signing Keys
+*.jks
+*.keystore
+key.properties
+
+# Screenshots / temp
+*.png

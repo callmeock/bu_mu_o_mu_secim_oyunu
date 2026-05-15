@@ -1,20 +1,24 @@
+import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'services/ad_service.dart';
+import 'main.dart';
 
 class UnlimitedModePage extends StatefulWidget {
-  const UnlimitedModePage({Key? key}) : super(key: key);
+  const UnlimitedModePage({super.key, this.analyticsSource = 'bottom_tab'});
+
+  /// [AnalyticsHelper.unlimitedOpen] için: `bottom_tab` | `home_card` vb.
+  final String analyticsSource;
 
   @override
   State<UnlimitedModePage> createState() => _UnlimitedModePageState();
 }
 
 class _UnlimitedModePageState extends State<UnlimitedModePage> {
-  final _analytics = FirebaseAnalytics.instance;
-
   bool _loading = true;
   String? _error;
 
@@ -29,15 +33,112 @@ class _UnlimitedModePageState extends State<UnlimitedModePage> {
   bool _showResults = false;
   int? _pctA;
   int? _pctB;
+  bool? _selectedIsA; // Hangi seçenek seçildi (true = A, false = B, null = henüz seçilmedi)
 
   // kimin sırası? (kullanıcı)
   late final String _uid;
 
+  // Banner Ad
+  BannerAd? _bannerAd;
+  bool _isBannerReady = false;
+  Timer? _bannerRefreshTimer;
+  bool _bannerReloadInFlight = false;
+
+  /// Periyodik banner yenileme aralığı (manuel istek; politika için çok agresif yapmayın).
+  static const Duration _bannerRefreshInterval = Duration(seconds: 30);
+
   @override
   void initState() {
     super.initState();
+    AnalyticsHelper.unlimitedOpen(source: widget.analyticsSource);
     _uid = FirebaseAuth.instance.currentUser?.uid ?? 'anonymous';
     _boot();
+    // İlk yükleme başarısız olsa bile sayfada kalındıkça yeniden dene.
+    _startBannerRefreshTimer();
+    _loadBannerAd();
+  }
+
+  @override
+  void dispose() {
+    _bannerRefreshTimer?.cancel();
+    _bannerRefreshTimer = null;
+    AdService.disposeBannerAd();
+    _bannerAd = null;
+    super.dispose();
+  }
+
+  void _startBannerRefreshTimer() {
+    _bannerRefreshTimer?.cancel();
+    _bannerRefreshTimer = Timer.periodic(_bannerRefreshInterval, (_) {
+      if (!mounted) return;
+      _reloadBannerAd();
+    });
+  }
+
+  /// Ağaçtan kaldırdıktan sonra eski reklamı dispose edip yenisini yükler.
+  void _reloadBannerAd() {
+    if (!mounted || _bannerReloadInFlight) return;
+    _bannerReloadInFlight = true;
+    setState(() {
+      _bannerAd = null;
+      _isBannerReady = false;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        _bannerReloadInFlight = false;
+        return;
+      }
+      AdService.loadBannerAd(
+        adSize: AdSize.banner,
+        forceNewLoad: true,
+        onAdLoaded: (ad) {
+          _bannerReloadInFlight = false;
+          if (!mounted) {
+            ad.dispose();
+            return;
+          }
+          setState(() {
+            _bannerAd = ad;
+            _isBannerReady = true;
+          });
+        },
+        onAdFailedToLoad: (error) {
+          _bannerReloadInFlight = false;
+          debugPrint('Banner yenileme başarısız: ${error.message}');
+          if (!mounted) return;
+          Future<void>.delayed(const Duration(seconds: 30), () {
+            if (!mounted) return;
+            _reloadBannerAd();
+          });
+        },
+      );
+    });
+  }
+
+  void _loadBannerAd({bool isRefresh = false}) {
+    AdService.loadBannerAd(
+      adSize: AdSize.banner,
+      forceNewLoad: isRefresh,
+      onAdLoaded: (ad) {
+        if (!mounted) {
+          ad.dispose();
+          return;
+        }
+        setState(() {
+          _bannerAd = ad;
+          _isBannerReady = true;
+        });
+      },
+      onAdFailedToLoad: (error) {
+        debugPrint('Banner ad yüklenemedi: ${error.message}');
+        if (!mounted) return;
+        // İlk yükleme de başarısız olursa kısa bekleme sonrası tekrar dene.
+        Future<void>.delayed(const Duration(seconds: 30), () {
+          if (!mounted) return;
+          _reloadBannerAd();
+        });
+      },
+    );
   }
 
   Future<void> _boot() async {
@@ -196,12 +297,11 @@ class _UnlimitedModePageState extends State<UnlimitedModePage> {
       });
 
       // Analytics
-      await _analytics.logEvent(
-        name: 'unlimited_vote',
-        parameters: {
-          'question_id': q.id,
-          'chose': chooseA ? 'A' : 'B',
-        },
+      await AnalyticsHelper.unlimitedVoteSubmitted(
+        questionId: q.id,
+        choseA: chooseA,
+        selected: chooseA ? q.optionA : q.optionB,
+        opponent: chooseA ? q.optionB : q.optionA,
       );
 
       // Yüzdeleri oku ve göster
@@ -222,6 +322,7 @@ class _UnlimitedModePageState extends State<UnlimitedModePage> {
         _pctA = pctA;
         _pctB = pctB;
         _showResults = true;
+        _selectedIsA = chooseA;
       });
 
       // Küçük gösterim süresi
@@ -236,6 +337,7 @@ class _UnlimitedModePageState extends State<UnlimitedModePage> {
         _pctA = null;
         _pctB = null;
         _voting = false;
+        _selectedIsA = null;
       });
     } catch (e) {
       if (!mounted) return;
@@ -289,14 +391,42 @@ class _UnlimitedModePageState extends State<UnlimitedModePage> {
 
     if (_loading) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Sınırsız Mod')),
+        appBar: AppBar(
+          title: const Text('Sınırsız Mod'),
+          flexibleSpace: Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+                colors: [
+                  Color(0xFF3C26FF), // Sol mavi
+                  Color(0xFFFF0000), // Sağ kırmızı
+                ],
+              ),
+            ),
+          ),
+        ),
         body: const Center(child: CircularProgressIndicator()),
       );
     }
 
     if (_error != null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Sınırsız Mod')),
+        appBar: AppBar(
+          title: const Text('Sınırsız Mod'),
+          flexibleSpace: Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+                colors: [
+                  Color(0xFF3C26FF), // Sol mavi
+                  Color(0xFFFF0000), // Sağ kırmızı
+                ],
+              ),
+            ),
+          ),
+        ),
         body: Center(
           child: Padding(
             padding: const EdgeInsets.all(20),
@@ -321,33 +451,78 @@ class _UnlimitedModePageState extends State<UnlimitedModePage> {
 
     if (_current == null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Sınırsız Mod')),
+        appBar: AppBar(
+          title: const Text('Sınırsız Mod'),
+          flexibleSpace: Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+                colors: [
+                  Color(0xFF3C26FF), // Sol mavi
+                  Color(0xFFFF0000), // Sağ kırmızı
+                ],
+              ),
+            ),
+          ),
+        ),
         body: const Center(child: Text('Soru bulunamadı.')),
       );
     }
 
     final q = _current!;
     return Scaffold(
- 
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 250),
-            transitionBuilder: (child, anim) =>
-                FadeTransition(opacity: anim, child: child),
-            child: _QuestionCard(
-              key: ValueKey(q.id),
-              data: q,
-              votingLocked: _voting,
-              showResults: _showResults,
-              pctA: _pctA,
-              pctB: _pctB,
-              onVoteA: () => _vote(true),
-              onVoteB: () => _vote(false),
-              onSkip: _skip,
+      appBar: AppBar(
+        title: const Text('Sınırsız Mod'),
+        flexibleSpace: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+              colors: [
+                Color(0xFF3C26FF), // Sol mavi
+                Color(0xFFFF0000), // Sağ kırmızı
+              ],
             ),
           ),
+        ),
+      ),
+      body: SafeArea(
+        child: Column(
+          children: [
+            // Ana içerik
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 250),
+                  transitionBuilder: (child, anim) =>
+                      FadeTransition(opacity: anim, child: child),
+                  child: _QuestionCard(
+                    key: ValueKey(q.id),
+                    data: q,
+                    votingLocked: _voting,
+                    showResults: _showResults,
+                    pctA: _pctA,
+                    pctB: _pctB,
+                    selectedIsA: _selectedIsA,
+                    onVoteA: () => _vote(true),
+                    onVoteB: () => _vote(false),
+                    onSkip: _skip,
+                  ),
+                ),
+              ),
+            ),
+            // Banner reklam - sadece ad yüklendiyse ve hazırsa göster
+            if (_isBannerReady && _bannerAd != null)
+              Container(
+                alignment: Alignment.center,
+                width: double.infinity,
+                height: _bannerAd!.size.height.toDouble(),
+                color: Colors.transparent,
+                child: AdWidget(ad: _bannerAd!),
+              ),
+          ],
         ),
       ),
     );
@@ -380,6 +555,7 @@ class _QuestionCard extends StatelessWidget {
   final bool showResults;
   final int? pctA;
   final int? pctB;
+  final bool? selectedIsA; // true = A seçildi, false = B seçildi, null = henüz seçilmedi
   final VoidCallback onVoteA;
   final VoidCallback onVoteB;
   final VoidCallback onSkip;
@@ -391,6 +567,7 @@ class _QuestionCard extends StatelessWidget {
     required this.showResults,
     required this.pctA,
     required this.pctB,
+    this.selectedIsA,
     required this.onVoteA,
     required this.onVoteB,
     required this.onSkip,
@@ -421,9 +598,12 @@ class _QuestionCard extends StatelessWidget {
             imageUrl: data.imageA,
             onTap: votingLocked ? null : onVoteA,
             bgColor: bg,
-            showBadge: showResults && pctA != null,
-            badgeText: pctA != null ? "%${pctA!}" : null,
-            highlight: showResults && (pctA ?? 0) >= (pctB ?? 0),
+            showResults: showResults,
+            pct: pctA,
+            isSelected: selectedIsA == true,
+            isOpponentSelected: selectedIsA == false,
+            questionId: data.id,
+            isOptionA: true,
           ),
         ),
         const SizedBox(height: 12),
@@ -435,9 +615,12 @@ class _QuestionCard extends StatelessWidget {
             imageUrl: data.imageB,
             onTap: votingLocked ? null : onVoteB,
             bgColor: bg,
-            showBadge: showResults && pctB != null,
-            badgeText: pctB != null ? "%${pctB!}" : null,
-            highlight: showResults && (pctB ?? 0) >= (pctA ?? 0),
+            showResults: showResults,
+            pct: pctB,
+            isSelected: selectedIsA == false,
+            isOpponentSelected: selectedIsA == true,
+            questionId: data.id,
+            isOptionA: false,
           ),
         ),
 
@@ -457,9 +640,12 @@ class _ChoiceTile extends StatelessWidget {
   final String? imageUrl;
   final VoidCallback? onTap;
   final Color bgColor;
-  final bool showBadge;
-  final String? badgeText;
-  final bool highlight;
+  final bool showResults;
+  final int? pct;
+  final bool isSelected; // Bu seçenek seçildi mi?
+  final bool isOpponentSelected; // Diğer seçenek seçildi mi?
+  final String questionId;
+  final bool isOptionA; // Bu seçenek A mı B mi?
 
   const _ChoiceTile({
     Key? key,
@@ -467,16 +653,20 @@ class _ChoiceTile extends StatelessWidget {
     required this.imageUrl,
     required this.onTap,
     required this.bgColor,
-    required this.showBadge,
-    required this.badgeText,
-    required this.highlight,
+    required this.showResults,
+    required this.pct,
+    required this.isSelected,
+    required this.isOpponentSelected,
+    required this.questionId,
+    required this.isOptionA,
   }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    final borderColor =
-        highlight ? const Color(0xFF15B21B) : Colors.black.withOpacity(0.15);
-    final titleColor = Colors.white;
+    // Overlay yoğunluğu: seçilmeyen kart = koyu (0.80), seçilen kart = açık (0.05)
+    final double overlayOpacity = showResults
+        ? (isSelected ? 0.05 : (isOpponentSelected ? 0.80 : 0.0))
+        : 0.0;
 
     return InkWell(
       borderRadius: BorderRadius.circular(16),
@@ -485,7 +675,10 @@ class _ChoiceTile extends StatelessWidget {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
           color: bgColor,
-          border: Border.all(color: borderColor, width: highlight ? 2 : 1),
+          border: Border.all(
+            color: Colors.black.withOpacity(0.15),
+            width: 1,
+          ),
           image: (imageUrl != null && imageUrl!.isNotEmpty)
               ? DecorationImage(
                   image: CachedNetworkImageProvider(imageUrl!),
@@ -499,17 +692,18 @@ class _ChoiceTile extends StatelessWidget {
         ),
         child: Stack(
           children: [
+            // Ana içerik
             Center(
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Text(
                   label,
                   textAlign: TextAlign.center,
-                  style: TextStyle(
+                  style: const TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.w800,
-                    color: titleColor,
-                    shadows: const [
+                    color: Colors.white,
+                    shadows: [
                       Shadow(
                         blurRadius: 6,
                         color: Colors.black,
@@ -520,29 +714,72 @@ class _ChoiceTile extends StatelessWidget {
                 ),
               ),
             ),
-            if (showBadge && badgeText != null)
-              Positioned(
-                right: 10,
-                top: 10,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.55),
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(
-                      color: Colors.white.withOpacity(0.35),
-                      width: 1,
-                    ),
-                  ),
-                  child: Text(
-                    badgeText!,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w900,
-                      color: Colors.white,
+
+            // Overlay efekti (kategorilerdeki gibi)
+            if (overlayOpacity > 0)
+              Positioned.fill(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: IgnorePointer(
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 250),
+                      color: Colors.black.withOpacity(overlayOpacity),
                     ),
                   ),
                 ),
+              ),
+
+            // Yüzdelik yazısı - ORTADA (kategorilerdeki gibi)
+            if (showResults && pct != null)
+              StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                stream: FirebaseFirestore.instance
+                    .collection('unlimited_polls')
+                    .doc(questionId)
+                    .snapshots(),
+                builder: (context, snapshot) {
+                  if (!snapshot.hasData || !snapshot.data!.exists) {
+                    return const SizedBox.shrink();
+                  }
+                  final data = snapshot.data!.data()!;
+                  final aCount = (data['aCount'] ?? 0) as int;
+                  final bCount = (data['bCount'] ?? 0) as int;
+                  final total = aCount + bCount;
+                  if (total == 0) return const SizedBox.shrink();
+
+                  final thisPct = pct!;
+                  
+                  // Renkler: eşitse mavi, kazanan yeşil (#008000), kaybeden kırmızı
+                  Color textColor;
+                  if (aCount == bCount) {
+                    textColor = Colors.blue;
+                  } else {
+                    // Bu seçenek A mı B mi?
+                    final thisCount = isOptionA ? aCount : bCount;
+                    final oppCount = isOptionA ? bCount : aCount;
+                    textColor = (thisCount > oppCount)
+                        ? const Color(0xFF008000)
+                        : Colors.red;
+                  }
+
+                  return Center(
+                    child: Text(
+                      "%$thisPct",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 44,
+                        fontWeight: FontWeight.bold,
+                        color: textColor,
+                        shadows: const [
+                          Shadow(
+                            blurRadius: 6,
+                            color: Colors.black,
+                            offset: Offset(2, 2),
+                          )
+                        ],
+                      ),
+                    ),
+                  );
+                },
               ),
           ],
         ),

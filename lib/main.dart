@@ -1,70 +1,66 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_analytics/firebase_analytics.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/services.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'unlimited_mode.dart';
+import 'services/ad_service.dart';
+import 'services/notification_service.dart';
+import 'services/vote_service.dart';
+import 'pages/intro_page.dart';
+import 'pages/main_navigation.dart';
+import 'services/analytics_session.dart';
+import 'services/analytics_helper.dart';
+import 'services/analytics_route_observer.dart';
+import 'services/unlock_ad_flow.dart';
+import 'widgets/app_lifecycle_analytics.dart';
+import 'analytics/analytics_constants.dart';
 
-/// -----------------------------
-///   ANALYTICS HELPER (YENİ)
-/// -----------------------------
-class AnalyticsHelper {
-  static final FirebaseAnalytics _analytics = FirebaseAnalytics.instance;
+export 'services/analytics_helper.dart';
 
-  /// Kullanıcı bir kategoriye girdiğinde loglanır.
-  static Future<void> categoryPlayed({
-    required String categoryKey,
-    required String categoryName,
-  }) async {
-    try {
-      await _analytics.logEvent(
-        name: 'category_played',
-        parameters: {
-          'category_key': categoryKey,
-          'category_name': categoryName,
-        },
-      );
-    } catch (_) {}
+Route<dynamic>? _onGenerateRoute(RouteSettings settings) {
+  if (settings.name == '/main') {
+    return MaterialPageRoute<void>(
+      settings: const RouteSettings(name: AnalyticsScreenNames.home),
+      builder: (_) => const MainNavigationPage(),
+    );
   }
-
-  /// Sınırsız mod açıldığında loglanır.
-  static Future<void> unlimitedOpen() async {
-    try {
-      await _analytics.logEvent(
-        name: 'unlimited_open',
-        parameters: {'source': 'home_card'},
-      );
-    } catch (_) {}
-  }
-
-  /// Her oy verildiğinde loglanır.
-  static Future<void> voteSubmitted({
-    required String categoryKey,
-    required String pairId,
-    required bool selectedIsA,
-    required String selected,
-    required String opponent,
-  }) async {
-    try {
-      await _analytics.logEvent(
-        name: 'vote_submitted',
-        parameters: {
-          'category_key': categoryKey,
-          'pair_id': pairId,         // örn: "0_7"
-          'selected_is_a': selectedIsA,
-          'selected': selected,      // kazanan item adı
-          'opponent': opponent,      // kaybeden item adı
-        },
-      );
-    } catch (_) {}
-  }
+  return null;
 }
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  AnalyticsSession.start();
   await Firebase.initializeApp();
+
+  // 📱 AdMob'u başlat (8.x: InitializationStatus döner)
+  try {
+    final adsInit = await MobileAds.instance.initialize();
+    // ignore: avoid_print
+    print("✅ AdMob başlatıldı");
+    for (final e in adsInit.adapterStatuses.entries) {
+      final s = e.value;
+      if (s.state != AdapterInitializationState.ready) {
+        // ignore: avoid_print
+        print(
+          '[AdMob] adapter ${e.key}: ${s.state} — ${s.description}',
+        );
+      }
+    }
+    await AdService.initialize();
+  } catch (e) {
+    // ignore: avoid_print
+    print("❌ AdMob başlatma hatası: $e");
+  }
+
+  // 🔔 Background message handler'ı kaydet
+  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
 
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 
@@ -85,6 +81,11 @@ Future<void> main() async {
     print("✅ Analytics userId ayarlandı: ${user.uid}");
   }
 
+  // 🔔 Notification servisini başlat
+  await NotificationService.initialize();
+
+  await AnalyticsHelper.appOpened();
+
   runApp(const MyApp());
 }
 
@@ -92,18 +93,80 @@ class MyApp extends StatelessWidget {
   const MyApp({super.key});
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'O mu Bu mu?',
-      theme: ThemeData(
-        brightness: Brightness.dark,
-        colorScheme: const ColorScheme.dark(
-          primary: Colors.orange,
+    return AppLifecycleAnalytics(
+      child: MaterialApp(
+        title: 'Bu mu O mu?',
+        theme: ThemeData(
+          brightness: Brightness.dark,
+          colorScheme: const ColorScheme.dark(
+            primary: Colors.orange,
+          ),
+          useMaterial3: true,
         ),
-        useMaterial3: true,
+        debugShowCheckedModeBanner: false,
+        navigatorObservers: <NavigatorObserver>[
+          AnalyticsRouteObserver.instance,
+        ],
+        home: const _InitialPage(),
+        onGenerateRoute: _onGenerateRoute,
       ),
-      debugShowCheckedModeBanner: false,
-      home: const CategorySelectionPage(),
     );
+  }
+}
+
+/// İlk açılış kontrolü yapan sayfa
+class _InitialPage extends StatefulWidget {
+  const _InitialPage();
+
+  @override
+  State<_InitialPage> createState() => _InitialPageState();
+}
+
+class _InitialPageState extends State<_InitialPage> {
+  bool _loading = true;
+  bool _showIntro = false;
+  bool _shellHomeScreenLogged = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkIntroStatus();
+  }
+
+  Future<void> _checkIntroStatus() async {
+    final prefs = await SharedPreferences.getInstance();
+    final introCompleted = prefs.getBool('intro_completed') ?? false;
+    
+    if (!mounted) return;
+    setState(() {
+      _showIntro = !introCompleted;
+      _loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (_showIntro) {
+      return const IntroPage();
+    }
+
+    if (!_shellHomeScreenLogged) {
+      _shellHomeScreenLogged = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        AnalyticsHelper.screenView(
+          screenName: AnalyticsScreenNames.home,
+          source: null,
+        );
+        AnalyticsNavigationState.setLastTabScreen(AnalyticsScreenNames.home);
+      });
+    }
+    return const MainNavigationPage();
   }
 }
 
@@ -118,11 +181,14 @@ class _CategorySelectionPageState extends State<CategorySelectionPage> {
   Map<String, dynamic> categories = {};
   bool _loading = true;
   String? _error;
+  Set<String> _unlockedCategories = {}; // Açık kategoriler
+  bool _loadingUnlocked = true;
 
   @override
   void initState() {
     super.initState();
     _loadCategories();
+    _loadUnlockedCategories();
   }
 
   Future<void> _loadCategories() async {
@@ -160,12 +226,106 @@ class _CategorySelectionPageState extends State<CategorySelectionPage> {
     }
   }
 
-  void _openUnlimited() {
-    // 🔹 Analytics: Sınırsız mod açıldı
-    AnalyticsHelper.unlimitedOpen();
+  /// Kullanıcının açık kategorilerini Firestore'dan çek
+  Future<void> _loadUnlockedCategories() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        setState(() {
+          _unlockedCategories = {};
+          _loadingUnlocked = false;
+        });
+        return;
+      }
 
+      final doc = await FirebaseFirestore.instance
+          .collection('user_progress')
+          .doc(user.uid)
+          .get();
+
+      final unlocked = doc.data()?['unlockedCategories'] as List<dynamic>?;
+      if (!mounted) return;
+      setState(() {
+        _unlockedCategories = (unlocked ?? []).map((e) => e.toString()).toSet();
+        _loadingUnlocked = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _unlockedCategories = {};
+        _loadingUnlocked = false;
+      });
+    }
+  }
+
+  /// Kategoriyi video reklam ile aç
+  Future<void> _unlockCategory(String categoryKey, String categoryName) async {
+    if (!mounted) return;
+    try {
+      final watched = await UnlockAdFlow.showRewardedForCategory(
+        context,
+        categoryKey: categoryKey,
+        categoryName: categoryName,
+      );
+      if (!mounted) return;
+      if (watched) {
+        final user = FirebaseAuth.instance.currentUser;
+        if (user != null) {
+          await FirebaseFirestore.instance
+              .collection('user_progress')
+              .doc(user.uid)
+              .set({
+            'unlockedCategories': FieldValue.arrayUnion([categoryKey]),
+            'lastUnlock': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+
+          await AnalyticsHelper.categoryUnlocked(
+            categoryKey: categoryKey,
+            categoryName: categoryName,
+            method: 'rewarded_interstitial',
+            gameMode: 'tournament',
+          );
+
+          setState(() {
+            _unlockedCategories.add(categoryKey);
+          });
+
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('✅ $categoryName kategorisi açıldı!'),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('❌ Reklam izlenemedi. Lütfen tekrar deneyin.'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Hata: ${e.toString()}'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  void _openUnlimited() {
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const UnlimitedModePage()),
+      MaterialPageRoute(
+        settings: const RouteSettings(name: AnalyticsScreenNames.unlimited),
+        builder: (_) =>
+            const UnlimitedModePage(analyticsSource: 'home_card'),
+      ),
     );
   }
 
@@ -201,31 +361,41 @@ class _CategorySelectionPageState extends State<CategorySelectionPage> {
                         final categoryName =
                             categories.keys.elementAt(index - 1);
                         final category = categories[categoryName];
+                        final categoryKey = category['key'] as String;
                         final imageUrl = (category['image'] ?? '').toString();
                         final items =
                             List<String>.from(category['items'] ?? const []);
+                        final isLocked = !_unlockedCategories.contains(categoryKey);
 
                         return _CategoryCard(
                           title: categoryName,
                           imageUrl: imageUrl,
-                          onTap: () {
-                            // 🔹 Analytics: Kategoriye girildi
-                            AnalyticsHelper.categoryPlayed(
-                              categoryKey: category['key'],
-                              categoryName: categoryName,
-                            );
+                          categoryKey: categoryKey,
+                          isLocked: isLocked,
+                          onTap: isLocked
+                              ? () => _unlockCategory(categoryKey, categoryName)
+                              : () {
+                                  // 🔹 Analytics: Kategoriye girildi
+                                  AnalyticsHelper.categoryPlayed(
+                                    categoryKey: categoryKey,
+                                    categoryName: categoryName,
+                                    gameMode: 'tournament',
+                                  );
 
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => TournamentPage(
-                                  categoryName: categoryName,
-                                  categoryKey: category['key'],
-                                  items: items,
-                                ),
-                              ),
-                            );
-                          },
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      settings: const RouteSettings(
+                                        name: AnalyticsScreenNames.tournament,
+                                      ),
+                                      builder: (_) => TournamentPage(
+                                        categoryName: categoryName,
+                                        categoryKey: categoryKey,
+                                        items: items,
+                                      ),
+                                    ),
+                                  );
+                                },
                         );
                       },
                     ),
@@ -310,37 +480,185 @@ class _UnlimitedCard extends StatelessWidget {
   }
 }
 
-class _CategoryCard extends StatelessWidget {
+class _CategoryCard extends StatefulWidget {
   final String title;
   final String imageUrl;
+  final String categoryKey;
+  final bool isLocked;
   final VoidCallback onTap;
   const _CategoryCard({
     required this.title,
     required this.imageUrl,
+    required this.categoryKey,
+    required this.isLocked,
     required this.onTap,
   });
 
   @override
+  State<_CategoryCard> createState() => _CategoryCardState();
+}
+
+class _CategoryCardState extends State<_CategoryCard>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _animationController;
+  late Animation<double> _scaleAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.isLocked) {
+      _animationController = AnimationController(
+        vsync: this,
+        duration: const Duration(milliseconds: 1500),
+      )..repeat(reverse: true);
+      _scaleAnimation = Tween<double>(begin: 1.0, end: 1.1).animate(
+        CurvedAnimation(
+          parent: _animationController,
+          curve: Curves.easeInOut,
+        ),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    if (widget.isLocked) {
+      _animationController.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return _FrostedCard(
-      onTap: onTap,
-      background: _CardBackground.image(url: imageUrl),
-      child: Center(
-        child: Text(
-          title,
-          style: const TextStyle(
-            fontSize: 32,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-            shadows: [
-              Shadow(
-                color: Colors.black45,
-                blurRadius: 4,
-                offset: Offset(1, 2),
+      onTap: widget.onTap,
+      background: _CardBackground.image(url: widget.imageUrl),
+      child: Stack(
+        children: [
+          // Kategori adı - her zaman göster
+          Center(
+            child: Text(
+              widget.title,
+              style: TextStyle(
+                fontSize: 32,
+                fontWeight: FontWeight.bold,
+                color: widget.isLocked
+                    ? Colors.white.withOpacity(0.5)
+                    : Colors.white,
+                shadows: const [
+                  Shadow(
+                    color: Colors.black45,
+                    blurRadius: 4,
+                    offset: Offset(1, 2),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
-        ),
+          // Kilitli durum için minimal overlay
+          if (widget.isLocked)
+            Positioned.fill(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.4),
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                child: Stack(
+                  children: [
+                    // Sağ üst köşe - Kilit badge
+                    Positioned(
+                      top: 12,
+                      right: 12,
+                      child: AnimatedBuilder(
+                        animation: _scaleAnimation,
+                        builder: (context, child) {
+                          return Transform.scale(
+                            scale: _scaleAnimation.value,
+                            child: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: Colors.orange.withOpacity(0.9),
+                                shape: BoxShape.circle,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.orange.withOpacity(0.5),
+                                    blurRadius: 8,
+                                    spreadRadius: 1,
+                                  ),
+                                ],
+                              ),
+                              child: const Icon(
+                                Icons.lock,
+                                size: 18,
+                                color: Colors.white,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    // Alt kısım - Video izle butonu
+                    Positioned(
+                      bottom: 12,
+                      left: 12,
+                      right: 12,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [
+                              Color(0xFFFF6B35),
+                              Color(0xFFF7931E),
+                            ],
+                          ),
+                          borderRadius: BorderRadius.circular(20),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.orange.withOpacity(0.3),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            onTap: widget.onTap,
+                            borderRadius: BorderRadius.circular(20),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 10,
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                mainAxisSize: MainAxisSize.min,
+                                children: const [
+                                  Icon(
+                                    Icons.play_arrow_rounded,
+                                    size: 18,
+                                    color: Colors.white,
+                                  ),
+                                  SizedBox(width: 6),
+                                  Text(
+                                    'Video İzle',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -570,15 +888,20 @@ class _TournamentPageState extends State<TournamentPage> {
 
     final selected = options[index];
     final opponent = options[1 - index];
-    final pairId = _pairIdBySeed(selected, opponent);
 
-    final selSeed = seedIndex[selected]!;
-    final oppSeed = seedIndex[opponent]!;
-    final selectedIsA = selSeed <= oppSeed;
-
-    await _voteOnPair(widget.categoryKey, pairId, selectedIsA);
+    // Vote using VoteService (new schema)
+    await VoteService.vote(
+      widget.categoryKey,
+      selected,
+      opponent,
+      selected, // chosenId
+    );
 
     // 🔹 Analytics: Oy verildi
+    final pairId = VoteService.generatePairId(selected, opponent);
+    final List<String> normalized = [selected, opponent]..sort();
+    final selectedIsA = selected == normalized[0];
+    
     AnalyticsHelper.voteSubmitted(
       categoryKey: widget.categoryKey,
       pairId: pairId,
@@ -603,8 +926,7 @@ class _TournamentPageState extends State<TournamentPage> {
     final bool isSelected = selectedIndex == index;
     final desc = descriptions[name];
 
-    final opponent = options.firstWhere((e) => e != name, orElse: () => '');
-    final pairId = (opponent.isNotEmpty) ? _pairIdBySeed(name, opponent) : null;
+    final opponent = options.firstWhere((e) => e != name, orElse: () => '');  
 
     // Overlay yoğunluğu: seçilmeyen kart = tam; seçilen (kazanan) = yarım
     final double overlayOpacity = hasVoted ? (isSelected ? 0.05 : 0.80) : 0.0;
@@ -676,30 +998,28 @@ class _TournamentPageState extends State<TournamentPage> {
                   ),
 
                 // 🔹 Yüzdelik yazısı — overlay'in ÜSTÜNDE
-                if (hasVoted && pairId != null)
-                  StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-                    stream: FirebaseFirestore.instance
-                        .collection('polls')
-                        .doc(widget.categoryKey)
-                        .collection('pairs')
-                        .doc(pairId)
-                        .snapshots(),
+                if (hasVoted && opponent.isNotEmpty)
+                  StreamBuilder<Map<String, int>>(
+                    stream: VoteService.getVoteCountsStream(
+                      widget.categoryKey,
+                      name,
+                      opponent,
+                    ),
                     builder: (context, snapshot) {
-                      if (!snapshot.hasData || !snapshot.data!.exists) {
+                      if (!snapshot.hasData) {
                         return const SizedBox.shrink();
                       }
-                      final data = snapshot.data!.data()!;
-                      final aCount = (data['aCount'] ?? 0) as int;
-                      final bCount = (data['bCount'] ?? 0) as int;
+                      final counts = snapshot.data!;
+                      final aCount = counts['aCount'] ?? 0;
+                      final bCount = counts['bCount'] ?? 0;
                       final total = aCount + bCount;
                       if (total == 0) return const SizedBox.shrink();
 
-                      // Bu kart küçük seed mi?
-                      final nameSeed = seedIndex[name]!;
-                      final oppSeed = seedIndex[opponent]!;
-                      final isThisA = nameSeed <= oppSeed;
+                      // Determine which item is 'a' (normalized order)
+                      final List<String> normalized = [name, opponent]..sort();
+                      final bool thisIsA = name == normalized[0];
 
-                      final pct = isThisA
+                      final pct = thisIsA
                           ? (aCount / total * 100).round()
                           : (bCount / total * 100).round();
 
@@ -708,8 +1028,8 @@ class _TournamentPageState extends State<TournamentPage> {
                       if (aCount == bCount) {
                         textColor = Colors.blue;
                       } else {
-                        final thisCount = isThisA ? aCount : bCount;
-                        final oppCount = isThisA ? bCount : aCount;
+                        final thisCount = thisIsA ? aCount : bCount;
+                        final oppCount = thisIsA ? bCount : aCount;
                         textColor = (thisCount > oppCount)
                             ? const Color(0xFF008000)
                             : Colors.red;
@@ -743,39 +1063,9 @@ class _TournamentPageState extends State<TournamentPage> {
     );
   }
 
-  // ---- Seed tabanlı yardımcılar ----
-  String _pairIdBySeed(String a, String b) {
-    final sa = seedIndex[a] ?? 1 << 30;
-    final sb = seedIndex[b] ?? 1 << 30;
-    final low = sa <= sb ? sa : sb;
-    final high = sa <= sb ? sb : sa;
-    return "${low}_$high"; // örn: "0_7"
-  }
-
-  Future<void> _voteOnPair(
-      String categoryKey, String pairId, bool selectedIsA) async {
-    final ref = FirebaseFirestore.instance
-        .collection('polls')
-        .doc(categoryKey)
-        .collection('pairs')
-        .doc(pairId);
-
-    await FirebaseFirestore.instance.runTransaction((txn) async {
-      final snap = await txn.get(ref);
-      if (!snap.exists) {
-        txn.set(ref, {
-          'aCount': 0,
-          'bCount': 0,
-          'createdAt': FieldValue.serverTimestamp()
-        });
-      }
-      txn.update(ref, {
-        selectedIsA ? 'aCount' : 'bCount': FieldValue.increment(1),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-    });
-  }
-  // ----------------------------------
+  // ---- Voting using VoteService (new schema) ----
+  // Note: Tournament algorithm still uses seedIndex for bracket logic,
+  // but voting uses VoteService with deterministic pairId from SHA1
 
   Widget _buildWinnerScreen(String winner) {
     final desc = descriptions[winner];
